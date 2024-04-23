@@ -1,0 +1,40 @@
+Package: componentts
+Type: Package
+Title: Select the number of components in two-table quantitative methods
+Version: 0.1.0
+Authors@R: 
+    person("Luke", "Moraglia", , "Luke.Moraglia@utdallas.edu", role = c("aut", "cre"))
+Description: Implements PLSC, CCA, and RDA and provides a wide array of permutation
+    tests to decide the number of components/dimensions to keep.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Imports:
+    GSVD,
+    MASS,
+    Rfast,
+    abind,
+    Rcpp,
+    RcppEigen,
+    RcppZiggurat,
+    parallel,
+    foreach,
+    doParallel,
+    doRNG
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.2.1
+Suggests: 
+    testthat (>= 3.0.0),
+    bench,
+    tictoc,
+    knitr,
+    rmarkdown,
+    ggplot2,
+    corrplot
+Config/testthat/edition: 3
+LinkingTo: 
+    Rcpp,
+    RcppEigen
+VignetteBuilder: knitr
+Depends: 
+    R (>= 2.10)
+LazyData: true

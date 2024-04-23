@@ -1,0 +1,46 @@
+
+<!-- README.md is generated from README.Rmd. Please edit that file -->
+
+# componentts
+
+<!-- badges: start -->
+<!-- badges: end -->
+
+Welcome to the `componentts` package, a package whose goal is to provide
+ways of selecting the number of components to keep in a two-table (the
+`tt` in `componentts`) analysis. The two-table analyses covered by this
+package are partial least squares correlation (PLSC), canonical
+correlation analysis (CCA), and redundancy analysis (RDA). `componentts`
+is the result of my (Luke Moraglia’s) dissertation, where I investigated
+several “stopping rules” for the two-table analyses—rules or algorithms
+that select the number of components to keep. The stopping rules covered
+by this package all involve permutation tests, from the very simplest
+permutation tests, such as `SRP()`, to more complex rules with
+additional cross-validation, such as `multiple_hold()`.
+
+For an overview of the functionality of the package, I recommend reading
+the accompanying vignette, and if you’d really like to become an expert,
+I recommend reading my dissertation, which will be available publicly
+once it has been defended (Summer 2024) and in the mean time is
+available by contacting me.
+
+## Installation
+
+You can install `componentts` from [GitHub](https://github.com/) with:
+
+``` r
+# install.packages("devtools")
+devtools::install_github("LukeMoraglia/componentts")
+```
+
+You may first need to install the `GSVD` package by Derek Beaton
+(<https://github.com/derekbeaton/GSVD>). At time of writing, April 2024,
+`componentts` relies on a bug fix to the `GSVD` package that allows
+eigendecomposition on rank-one matrices. This bug fix has been
+implemented in the master branch on my GitHub (the relevant issue is
+\#32 on Derek’s GitHub, and we are currently waiting on pull request
+\#33 to get this fix integrated into the official package).
+
+``` r
+devtools::install_github("LukeMoraglia/GSVD")
+```

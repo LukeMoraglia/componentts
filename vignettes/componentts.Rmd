@@ -1,0 +1,386 @@
+---
+title: "componentts"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{componentts}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE
+)
+```
+
+Welcome to the `componentts` package, a package whose goal is to provide ways of selecting the number of components to keep in a two-table (the `tt` in `componentts`) analysis.
+The two-table analyses covered by this package are partial least squares correlation (PLSC), canonical correlation analysis (CCA), and redundancy analysis (RDA).
+`componentts` is the result of my (Luke Moraglia's) dissertation, where I investigated several "stopping rules" for the two-table analyses---rules or algorithms that select the number of components to keep. 
+The package, it's purpose, and the functions herein will probably make more sense if you read or reference the dissertation, but in this vignette I will try to summarize the essential functionality.
+
+## Getting started
+
+If you've not already installed `componentts`, it can be installed from my GitHub.
+Additionally, `componentts` depends on one package that is not currently on CRAN, the `GSVD` package by Derek Beaton, which is available on his GitHub (https://github.com/derekbeaton/GSVD). 
+At time of writing, April 2024, `componentts` relies on a bug fix to the `GSVD` package that allows eigendecomposition on rank-one matrices.
+This bug fix has been implemented in the master branch on my GitHub (the relevant issue is #32 on Derek's GitHub and we are currently waiting on pull request #33 to get this fix integrated into the official package).
+To install `GSVD` with the bug fix and to install `componentts` you can run the two lines below.
+
+```{r eval = FALSE}
+devtools::install_github("LukeMoraglia/GSVD")
+devtools::install_github("LukeMoraglia/componentts")
+```
+
+Once it's installed, we can load it and the other packages we'll need for the vignette.
+
+```{r message=FALSE}
+library(componentts)
+library(ggplot2)
+library(corrplot)
+```
+
+## Two table analyses
+
+There are three functions that implement the two-table analyses included with `componentts`: `plsc()`, `cca()`, and `rda()`.
+We can demonstrate them using the example data that are included with the package, the `LEMON` data.
+
+The `LEMON` data contains a table of cognitive test variables and a table of medical variables, such as blood pressure, blood bio-markers, and body measurements.
+The two-table analysis functions do not have options to center or scale the data, so if you would like to do that, you should center and scale the data prior.
+The package provides a helper function for when you would like to center the columns and normalize them to have a sum of squares of 1; this is the `scale_SS1()` function.
+
+```{r}
+head(LEMON$cognitive)
+head(LEMON$medical)
+```
+
+We center and scale our data, and remove the `ID` column.
+
+```{r}
+cog_s <- scale_SS1(LEMON$cognitive[,-1])
+med_s <- scale_SS1(LEMON$medical[,-1])
+```
+
+Then we can run whichever two-table analyses we would like.
+
+```{r}
+res_plsc <- plsc(X = med_s, Y = cog_s)
+res_cca <- cca(X = med_s, Y = cog_s)
+res_rda <- rda(X = med_s, Y = cog_s)
+```
+
+We can do a little visualization of the results, using the PLSC results as an example.
+First we'll look at the scree plot of the singular values (`d`) to see how much covariance is captured by each component. 
+
+```{r fig.width=5, fig.height=5}
+ggplot(mapping = aes(x = 1:length(res_plsc$d), y = res_plsc$d)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "PLSC Scree Plot", x = "Component", y = "Singular Value")
+```
+
+We could also look at the loadings (`f` and `g` in our results list) and the latent variable values for the observations (`lx` and `ly` in our results list).
+
+## Stopping rules
+
+There were four computationally-intensive stopping rules investigated in my dissertation and included in this package, though each rule has several options/hyperparameters that will affect the results.
+
+### Permutation methods
+
+All of the computationally-intensive stopping rules use a permutation test of some sort, and there are two ways to permute the matrices: randomize the rows of the matrices (RR), or randomize the values in every column of the matrices (REC).
+These two methods are controlled by the `rand_type` argument in stopping rule functions, and the possible options are `'rand_rows'` and `'rand_each_col'`.
+For instance, here are the differences permuting an example matrix with the two methods, using the underlying functions of `rand_rows_cpp()` and `rand_each_col_cpp()`.
+
+```{r}
+X <- matrix(1:20, nrow = 5, ncol = 4, byrow = TRUE)
+X
+
+set.seed(24)
+rand_rows_cpp(X)
+
+set.seed(42)
+rand_each_col_cpp(X)
+```
+
+The `_cpp` at the end of these functions is to show that they are permutation functions written in C++ using the `Rcpp` package, and these are included in the package to considerably speed up permutations, especially on large matrices.
+The `R` versions of these functions are just called `rand_rows()` and `rand_each_col()`. 
+
+### SRP
+
+The simultaneous randomization procedure (SRP) is a simple permutation test for the two-table methods.
+You can select which two-table method you are using with the `ttmethod` argument, control the number of permutations with `n_iter`, and control the permutation method with the `rand_type` argument.
+There is also a `parallel` argument that can have the function use multiple cores on your machine for potentially faster computation, but this only becomes advantageous when the size of the matrices are large enough, as there is a time cost to spin up the parallelization.
+
+We'll look at SRP for PLSC using the REC permutation method and 199 permutations.
+A little note, the original data counts as a possible permutation configuration, so the resulting null distributions will have `n_iter + 1` values, so setting to `199` gives us a nice round `200`. 
+
+```{r}
+set.seed(1729)
+srp_rec_plsc <- SRP(X = med_s, Y = cog_s, ttmethod = "plsc", 
+                   n_iter = 199, rand_type = 'rand_each_col')
+```
+
+The result is a list containing `fixed_res` and `perm_res`, and `perm_res` is the thing we are interested in.
+`perm_res` is itself a list containing test statistics for each component and their corresponding null distributions.
+
+```{r}
+names(srp_rec_plsc$perm_res)
+```
+
+Each vector of test statistics, such as `d`, `l_prop`, or `pseudo_R2_1` have a corresponding matrix containing the null distributions from the permutation test, labeled with a `_dist` at the end.
+Each test statistic vector has a length equal to the number of components, and the matrices have that many columns. 
+The rows of the matrices correspond to the `n_iter + 1` values in the null distributions.
+
+```{r}
+length(srp_rec_plsc$perm_res$l_prop)
+dim(srp_rec_plsc$perm_res$l_prop_dist)
+```
+
+These stopping rules that use permutation tests rely on obtaining a $p$ value for each component, and then selecting the first set of components that all have $p < \alpha$ where $\alpha$ is some predetermined cutoff; most often $\alpha = .05$.
+The stopping rule functions only give the test statistics and their null distributions, but you can easily get $p$ values using the `pval_from_dist()` or `pvals_all()` functions.
+
+The `pval_from_dist()` function takes a vector of test statistics and a null distribution matrix and returns the $p$ value for each component.
+The `"one_sided_right"` for `test_type` means that we want a one-tailed test that checks if our test statistic is significantly greater than the null distribution, rather than `"one_sided_left"`, which would check for significantly smaller, or `"two_sided"`, which would check for more extreme on either side of the distribution. 
+All of the test statistics for `SRP()` should use `"one_sided_right"`.
+
+```{r}
+pval_from_dist(stat = srp_rec_plsc$perm_res$l_prop,
+               stat_dist = srp_rec_plsc$perm_res$l_prop_dist,
+               test_type = "one_sided_right")
+```
+
+In this case, the first three components had small $p$ values, so these would be the components selected.
+There are seven test statistics returned by `SRP()`, and you might not want to call `pval_from_dist()` seven times.
+Instead, you can use `pvals_all()` as a convenience function to get the $p$ values from all of your null distributions.
+
+```{r}
+pvals_all(dist_list = srp_rec_plsc$perm_res)
+```
+
+It's clear from these results that the choice of test statistic is important for the number of components selected. 
+Some stats, such as the pseudo-$R^2$s and the RV coefficient select a nearly all of the components, while others are more conservative. 
+
+### DRP
+
+The deflation randomization procedure (DRP) is very similar to SRP, except that it includes a deflation step before computing the null distribution for each component.
+In this way, the effects of previous components are eliminated from the matrices before each component is tested.
+This deflation step means that there needs to be a deflation operation added for each component, but even more time consuming is the fact that each component requires its own set of permutations.
+Therefore, the total number of permutations that are computed is `n_iter` times the number of components, which can greatly increase the amount of time required for the stopping rule to run.
+Because of this, an additional argument has been added called `n_dim_comp` which controls the number of components to compute null distributions for.
+The default of `NULL` means that all components are computed.
+Here we have an example with `n_dim_comp = 10`. 
+
+```{r}
+set.seed(5697)
+drp_rec_plsc <- DRP(X = med_s, Y = cog_s, ttmethod = "plsc", 
+                   n_iter = 199, rand_type = 'rand_each_col',
+                   n_dim_comp = 10)
+```
+
+The results are very similar to `SRP()` with a list of test statistic vectors and corresponding null distribution matrices.
+The only difference is that the `l_prop` statistic is not included, as this one does not work with the deflation procedure.
+A call to `pvals_all()` similarly gives all of the $p$ values.
+
+```{r}
+pvals_all(dist_list = drp_rec_plsc$perm_res)
+```
+We again see some major differences between test statistics, with pseudo-$R^2$s and RV selecting many components, while the others keep it to 1 or 4. 
+
+### MH
+
+The multiple holdout (MH) stopping rule is the most complex out of the four, with a large number of computations required. 
+The rule involves splitting the data into training and holdout sets.
+The number of data splits is controlled by the `n_holdouts` argument, which has a default of `10`. 
+The percentage of data in the training set is controlled by `percent_train` with a default of `.9`.
+For each of these holdout sets, a permutation test with deflation is conducted, with a statistic called `rho` as the test statistic for each component.
+This means that the `rho` result is a matrix that is `n_holdouts` by the number of components (in the example below we set `n_dim_comp = 5`).
+The `rho_dist` contains the null distribution for each value of rho, so it is a 3D array that is `n_iter + 1` by the number of components by `n_holdouts`. 
+```{r}
+set.seed(1021)
+mh_rec_plsc <- multiple_hold(X = med_s, Y = cog_s, ttmethod = "plsc",
+                             n_iter = 199, rand_type = 'rand_each_col',
+                             n_holdouts = 10, percent_train = .9, 
+                             n_dim_comp = 5)
+```
+
+```{r}
+dim(mh_rec_plsc$perm_res$rho)
+dim(mh_rec_plsc$perm_res$rho_dist)
+```
+
+Based on this structure, each component can have `n_holdouts` $p$ values. 
+`pval_from_dist()` or `pvals_all()` are not suited to this structure, so another function can be used: `pvals_for_MH()`.
+
+```{r}
+pvals_for_MH(dist_list = mh_rec_plsc$perm_res)
+```
+
+The `pvals_omni` matrix contains the `n_holdout` $p$ values for each component.
+These can be used with the "omnibus" hypothesis test where a component is selected if at least one of its $p$ values are significant. 
+When this method was proposed, it was recommended that a Bonferroni correction be used, so $\alpha = .05 /$`n_holdouts` for testing each of the `n_holdout` $p$ values. 
+In the example here, no components would be selected because none of the $p$ values in the first column are less than $.005$. 
+
+The `pvals_avg` vector contains $p$ values obtained from the "averaging" method where the `rho` values from the holdouts are first averaged, and this average rho is used as the test statistic for a single hypothesis test, resulting in only one $p$ value per component.
+Using this method, the first component would be selected.
+
+### SHR
+
+The split half reliability (SHR) stopping rule works by splitting the data in half and measuring the agreement in the singular vectors generated by each half.
+The agreement between generalized singular vectors of the splits is computed using the correlation between corresponding singular vectors. 
+Each component has a left generalized singular vector (stored in the `p` matrix) and a right generalized singular vector (stored in the `q` matrix), so for each component, two correlations (a `Pcorr` and a `Qcorr`) are computed for each data split.
+The process is repeated across many splits of the data, set using the `n_splits` argument in the `split_half()` function, so we take the mean of the correlations across the splits. 
+Therefore, each component ends up with a `Pcorr_mean` and a `Qcorr_mean` in the output of the function, and these are useed as the test statistics for the permutation test.
+
+```{r}
+set.seed(1115)
+shr_rec_plsc <- split_half(X = med_s, Y = cog_s, ttmethod = 'plsc',
+                           n_iter = 199, rand_type = 'rand_each_col',
+                           n_splits = 100)
+```
+
+The output of the `split_half()` is similar to the other functions, with the important items in the `perm_res`. 
+This contains the test statistic vectors and their null distribution matrices.
+
+```{r}
+names(shr_rec_plsc$perm_res)
+```
+
+This can be passed into the `pvals_all()` function, just like with `SRP()` and `DRP()`.
+
+```{r}
+pvals_all(dist_list = shr_rec_plsc$perm_res)
+```
+
+You could use two methods for selecting the components to keep based on the $p$ values. 
+The first is the "Both" method, where both the `Pcorr_mean` and `Qcorr_mean` $p$ values need to be less than $\alpha$, and the other is the "Either" method, where only one has to be less than $\alpha$. 
+
+
+## Simulating data
+
+The main goal of my dissertation was to evaluate these stopping rules using simulated data with a known number of true components.
+This required simulating data by sampling from a multivariate normal distribution that was specified using a correlation matrix with a block structure.
+The number of true components is determined by the number of blocks of correlated variables between the first and second data tables (denoted `X` and `Y`) in the population correlation matrix.
+This all makes more sense with an example.
+
+### Generating a correlation matrix
+
+We can use the `multi_block_cor()` function to generate a correlation matrix with a block structure that we specify in the function. 
+
+```{r}
+cor_blocks <- c(.9, .825, .75, .675, .6)
+ncolX <- 10
+ncolY <- 10
+ncolX_blocks <- rep(2, 5)
+ncolY_blocks <- rep(2, 5)
+cor_blocksX <- cor_blocks + .05
+cor_blocksY <- cor_blocksX
+
+cor_mat <- multi_block_cor(cor_blocks = cor_blocks,
+                           ncolX = ncolX, ncolY = ncolY,
+                           ncolX_blocks = ncolX_blocks,
+                           ncolY_blocks = ncolY_blocks,
+                           cor_blocksX = cor_blocksX,
+                           cor_blocksY = cor_blocksY,
+                           offXY = 0, offX = 0, offY = 0)
+```
+
+The number of blocks is specified by the length of the `cor_blocks` argument. 
+`cor_blocks` is a vector of correlations, each one corresponding to one of the blocks of variables in the `X` and `Y` cross correlation matrix (i.e., `cor(X, Y)`)
+
+```{r fig.height=7, fig.width=7}
+rownames(cor_mat) <- c(paste0("X", 1:10), paste0("Y", 1:10))
+colnames(cor_mat) <- rownames(cor_mat)
+corXY <- cor_mat[1:ncolX, (ncolX+1):ncol(cor_mat)]
+corX <- cor_mat[1:ncolX, 1:ncolX]
+corY <- cor_mat[(ncolX+1):ncol(cor_mat), (ncolX+1):ncol(cor_mat)]
+
+corrplot(corXY, method = 'color', addCoef.col = 'black',
+         addCoefasPercent = TRUE, outline = TRUE, 
+         tl.col = 'black', tl.srt = 0, mar = c(0,0,1,0),
+         number.cex = .8)
+```
+
+In this case, we have five blocks with a decreasing amount of correlation from top-left to bottom-right. 
+There are 10 variables in `X` and 10 in `Y`, specified by the `ncolX` and `ncolY` arguments.
+Each block contains two variables from `X` and two variables from `Y`, specified by the `ncolX_blocks` vector and `ncolY_blocks` vector. 
+The correlations that are not part of a block are specified using the `offXY` argument; in this case they are all set to `0`. 
+
+If we look at the full `cor_mat` matrix, we can see what the last few arguments specify.
+
+```{r fig.height=7, fig.width=7}
+corrplot(cor_mat, method = 'color', addCoef.col = 'black',
+         addCoefasPercent = TRUE, outline = TRUE, 
+         tl.col = 'black', tl.srt = 0, mar = c(0,0,1,0),
+         number.cex = .8)
+```
+
+Each block between `X` and `Y` also has a corresponding block in the `X` correlations and the `Y` correlations. 
+For example, the first block between `X` and `Y` has correlations of .9, and the corresponding blocks in `X` and in `Y` both contain correlations of 1 and .95. 
+The .95 was specified by the first number in `ncolX_blocks` and `ncolY_blocks`. 
+For ease, `ncolX_blocks` and `ncolY_blocks` were set to just .05 more than the values in `cor_blocks`.
+This option also ensures that the correlation matrix is positive definite, which is required for sampling from the multivariate normal distribution (you will get an error when sampling if it's not positive definite).
+The correlations in the off-diagonal for `X` and `Y` can be specified with `offX` and `offY` respectively.
+
+How do we know that the five blocks in this correlation matrix correspond to five components?
+The two-table methods of PLSC, CCA, and RDA all decompose the correlation matrix between `X` and `Y` using the singular value decomposition (SVD), with CCA and RDA adding some additional constraints. 
+When the population correlation matrix is decomposed with the SVD, the singular values that correspond to a block will have some positive value, and all other singular values will be zero.
+
+```{r}
+round(svd(corXY)$d, 3) # PLSC
+```
+```{r}
+corX_isqrt <- fast_invsqrt_psd_matrix(corX)
+corY_isqrt <- fast_invsqrt_psd_matrix(corY)
+round(svd(corX_isqrt %*% corXY %*% corY_isqrt)$d, 3) # CCA
+```
+```{r}
+round(svd(corX_isqrt %*% corXY)$d, 3) # RDA
+```
+
+
+### Sampling from the multivariate normal distribution
+
+Once we have a population correlation matrix, we can sample from the multivariate normal distribution.
+The `gen_mvrnorm_from_cor_fast()` function facilitates the sampling.
+
+```{r}
+d_list <- gen_mvrnorm_from_cor_fast(cor_mat = cor_mat, nrows = 100,
+                                    ncolX = ncolX, ncolY = ncolY, seed = 42)
+```
+
+We specify the number of observations or rows in the sampled data with the `nrows` argument.
+The `ncolX` and `ncolY` arguments are the same as those used for generating `cor_mat` and will allow the columns of data to be correctly placed into the `X` or `Y` matrices. 
+The `seed` must be specified for reproducible results due to the underlying C++ code.
+The function results in two matrices, `X` and `Y` with the same number of rows.
+
+```{r}
+dim(d_list$X)
+dim(d_list$Y)
+```
+
+How do the correlations between the sampled `X` and `Y` compare to the population correlation matrix, `cor_mat`?
+
+```{r fig.height=7, fig.width=7}
+corXY_samp <- cor(d_list$X, d_list$Y)
+corrplot(corXY_samp, method = 'color', addCoef.col = 'black',
+         addCoefasPercent = TRUE, outline = TRUE, 
+         tl.col = 'black', tl.srt = 0, mar = c(0,0,1,0),
+         number.cex = .8)
+```
+
+Where there once zeroes in the off diagonal, now there are small correlations. 
+These are the result of noise due to sampling, and they will contribute to all of the singular values being above zero when this matrix is decomposed with the SVD.
+
+```{r}
+round(svd(corXY_samp)$d, 3)
+```
+
+The sixth singular value and beyond are no longer zero, but instead are small positive values.
+The goal of the stopping rules is to correctly identify that only the first five components correspond to true components in the population, while the last five are the result of noise due to sampling.
+
+For a simulation study, the simulated datasets can be created by adjusting the parameters of the `cor_mat` and then sampling from the correlation matrix many times with various options for `nrows` to get a large number of simulated datasets.
+For each of these datasets, we know the true number of components, so we test each stopping rule by seeing how many components it selects for that dataset.
+If the stopping rule selects too many, this is a Type I error, but if it selects too few, this shows low power.
+The best rules will have low Type I error rates and high power across a large number of simulated datasets.
+
+While my dissertation was one such simulation study, there is no way I could ever cover all possible simulated data situations.
+With these functions, you can write your own simulations to test out these stopping rules, or test your own stopping rule! 
