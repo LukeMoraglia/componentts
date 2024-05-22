@@ -140,9 +140,9 @@ demo <- demo %>% select(ID, Gender, Age_bin)
 mutual_ID <- (cognitive %>% inner_join(medical, by = "ID") %>%
   inner_join(demo, by = "ID"))$ID
 
-cognitive <- cognitive %>% filter(ID %in% mutual_ID)
-medical <- medical %>% filter(ID %in% mutual_ID)
-demo <- demo %>% filter(ID %in% mutual_ID)
+cognitive <- cognitive %>% filter(ID %in% mutual_ID) %>% arrange(ID)
+medical <- medical %>% filter(ID %in% mutual_ID) %>% arrange(ID)
+demo <- demo %>% filter(ID %in% mutual_ID) %>% arrange(ID)
 
 write_csv(cognitive, paste0(data_path, "/cleaned/cognitive.csv"))
 write_csv(medical, paste0(data_path, "/cleaned/medical.csv"))
